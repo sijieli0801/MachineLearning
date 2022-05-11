@@ -1,0 +1,174 @@
+---
+title: "Seminar2"
+author: "Sijie Li"
+date: "4/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+dataPath <- "C:/Users/Sijie Li/OneDrive - The University of Chicago/Documents/MSCA/Spring2022/Machine Learning/wk2"
+dat<-read.csv(paste(dataPath,"slice_localization_data.csv",sep="/"))
+```
+
+
+Apply ridge model 
+```{r}
+library(glmnet)
+
+train_slice_df<-readRDS(paste(dataPath,"slice_train.rds",sep="/"))
+test_slice_df<-readRDS(paste(dataPath,"slice_test.rds",sep="/"))
+dim(train_slice_df)
+head(train_slice_df)
+ridgeModel<-glmnet(x=train_slice_df[,2:361],y=train_slice_df[,1],alpha=0,nlambda=200,lambda.min.ratio=.0001,standardize=F)
+```
+
+```{r}
+names(ridgeModel)
+```
+```{r}
+plot(ridgeModel,lwd=1)
+abline(h=0)
+
+```
+#Y_train <- as.matrix (train_slice_df[,1]) 
+
+CV
+```{r}
+set.seed(15)
+X_train <- as.matrix(train_slice_df[,2:361])
+cv.out=cv.glmnet(x=X_train,y=train_slice_df[,1],alpha=0) 
+plot(cv.out) 
+```
+select the best lambda
+```{r}
+bestlam =cv.out$lambda.min 
+bestlam
+```
+Apply ridge model with min lambda
+```{r}
+ridgeModel_new <-glmnet(x=X_train,y=train_slice_df[,1],alpha=0,lambda=bestlam,standardize=F)
+
+```
+
+```{r}
+summary(ridgeModel_new)
+```
+
+```{r}
+graphics.off() 
+par("mar") 
+par(mar=c(3,3,3,3))
+```
+```{r}
+ridge.coef=predict(ridgeModel_new,type="coefficients",s=bestlam)
+head(ridge.coef)
+```
+
+
+Check the removed slopes by regu
+```{r}
+eliminatedByRidge<- abs(ridge.coef[-1])<0.05
+removedSlopes<-rep(NA,361)
+removedSlopes[eliminatedByRidge]<-ridge.coef[1:361][eliminatedByRidge]
+```
+
+```{r}
+plot(ridge.coef[-1,],pch=19)
+points(removedSlopes,col="red",pch=20)
+```
+Predict on test set 
+```{r}
+X_test = as.matrix(test_slice_df[,2:361])
+ridge.pred=predict(ridgeModel_new, s=bestlam, newx=X_test)
+```
+
+Calculate the model metrics
+```{r}
+library(Metrics)
+
+m_AIC <- NA
+m_R2 <- NA
+# m_MAE <- mean(abs(ridge.pred - test_slide_df[,1]))
+m_MAE <- mae(test_slice_df$Y, ridge.pred)
+# (m_RMSE<-sqrt(mean((ridge.pred -y.test)^2) ))
+m_RMSE <- rmse(test_slice_df$Y, ridge.pred)
+m_num_variables <- length(ridge.coef) - length(removedSlopes[eliminatedByRidge])
+
+length(removedSlopes[eliminatedByRidge])
+
+validation_ridge <- c(m_AIC=NA, m_R2=NA, m_RMSE, m_MAE, m_num_variables) 
+validation_ridge
+```
+
+```{r}
+lassoModel<-glmnet(x=train_slice_df[,2:361],y=train_slice_df[,1],alpha=1,nlambda=100,lambda.min.ratio=.0001,standardize=F)
+```
+
+```{r}
+plot(lassoModel,lwd=1)
+abline(h=0)
+```
+```{r}
+set.seed(15)
+X_train <- as.matrix(train_slice_df[,2:361])
+cv.out.lasso <- cv.glmnet(x=X_train,y=train_slice_df[,1],alpha=1) 
+plot(cv.out.lasso) 
+```
+Best lambda for LASSO:
+```{r}
+bestlam.lasso <- cv.out.lasso$lambda.min 
+bestlam.lasso
+lassoModel.best <-glmnet(x=X_train,y=train_slice_df[,1],alpha=1,lambda=bestlam.lasso,standardize=F)
+```
+```{r}
+lassoModel.best
+```
+Get coefficients for lasso:
+```{r}
+lasso.coef <- predict(lassoModel.best, type="coefficients", s=bestlam.lasso)
+head(lasso.coef)
+```
+
+```{r}
+eliminatedByLasso <- lasso.coef[-1] == 0
+removedSlopes<-rep(NA,361)
+removedSlopes[eliminatedByLasso]<-lasso.coef[1:361][eliminatedByLasso]
+```
+
+```{r}
+plot(lasso.coef[-1,],pch=19)
+points(removedSlopes,col="red",pch=20)
+```
+Predict on test dataset
+```{r}
+X_test = as.matrix(test_slice_df[,2:361])
+lasso.pred=predict(lassoModel.best, s=bestlam.lasso, newx=X_test)
+```
+
+```{r}
+m_AIC <- NA
+m_R2 <- NA
+m_MAE <- mae(test_slice_df$Y, lasso.pred)
+m_RMSE <- rmse(test_slice_df$Y, lasso.pred)
+m_num_variables <- length(lasso.coef) - length(removedSlopes[eliminatedByLasso])
+
+length(removedSlopes[eliminatedByLasso])
+
+validation_lasso <- c(m_AIC=NA, m_R2=NA, m_RMSE, m_MAE, m_num_variables) 
+validation_lasso
+```
+```{r}
+print(validation_ridge)
+print(validation_lasso)
+```
+
+```{r}
+old_results<-readRDS(paste(dataPath, 'results-seminar-1.rds', sep="/"))
+res <- list(Validation=rbind(old_results$Validation,
+                             validation_ridge=validation_ridge,
+                             validation_lasso=validation_lasso),
+            Ridge_Model=ridgeModel,
+            Lasso_Model=lassoModel)
+saveRDS(res,'result.rds')
+```
+
