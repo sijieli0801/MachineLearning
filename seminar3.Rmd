@@ -1,0 +1,214 @@
+---
+title: "Seminar_3"
+author: "Sijie Li"
+date: "4/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+dataPath <- "C:/Users/Sijie Li/OneDrive - The University of Chicago/Documents/MSCA/Spring2022/Machine Learning/wk2"
+dat<-read.csv(paste(dataPath,"slice_localization_data.csv",sep="/"))
+```
+
+train and test dataset
+```{r}
+train_slice_df<-readRDS(paste(dataPath,"slice_train.rds",sep="/"))
+```
+
+
+```{r}
+test_slice_df<-readRDS(paste(dataPath,"slice_test.rds",sep="/"))
+```
+
+```{r}
+write.csv(train_slice_df,paste(dataPath,'slice_train.csv',sep="/"))
+
+write.csv(test_slice_df,paste(dataPath,'slice_test.csv',sep="/"))
+
+#saveRDS(res,paste(dataPath,'result_s3.rds',sep="/"))
+
+
+```
+
+
+
+load packages
+```{r}
+library(rpart)
+library(rpart.plot)
+library(ISLR)
+library(knitr)
+library(caret)
+library(MASS)
+library(e1071)
+```
+```{r}
+sfit <- rpart(Y~., data=train_slice_df)
+printcp(sfit)
+plotcp(sfit)
+```
+Caret to build model
+
+```{r}
+set.seed(0)
+
+ctrl <- trainControl(method = "cv", number = 10)
+tree.slice <- train(Y~., data=train_slice_df,
+                    method = 'rpart', trControl = ctrl)
+
+```
+
+```{r}
+tree.slice$results
+```
+
+best RMSE 
+```{r}
+mTree_cv_results <- tree.slice$results[1,]
+mTree_cv_results
+```
+
+```{r}
+rmse2 <- function(x) sqrt(mean(x^2))
+mae <- function(x)abs(mean(x))
+```
+
+test on cp=0.1132836
+```{r}
+tree_slice_test <- train(Y~., data=test_slice_df,
+                    method = 'rpart', trControl = ctrl,cp= 0.1132836)
+```
+
+
+```{r}
+treeRmse<-rmse(resid(tree_slice_test$finalModel))
+treeRmse
+```
+
+```{r}
+pred_cv <- predict(tree_slice_test$finalModel,newx = test_slice_df )
+
+m_RMSE <- RMSE(test_slice_df$Y, pred_cv)
+m_MAE <- MAE(test_slice_df$Y, pred_cv)
+
+```
+```{r}
+#RMSE(test_slice_df$Y,tree.slice$finalModel)
+```
+
+
+metrics calculation
+
+```{r}
+#m_RMSE <- tree.slice$results[1,2] 
+
+print(m_RMSE)
+
+#m_MAE <- tree.slice$results[1,4]
+print(m_MAE)
+
+validation_tree_cv <- c(m_AIC=NA,m_R2=NA,m_RMSE,m_MAE, m_num_variables=NA) 
+validation_tree_cv
+```
+using rpart on the best CP giving the smallest xerror
+
+```{r}
+sfit$cptable
+```
+best cp
+```{r}
+(best.CP = sfit$cptable[which.min(sfit$cptable[,"xerror"]),"CP"])
+
+```
+prune tree
+```{r}
+prunedTree <- prune(sfit, cp = best.CP, data=train_slice_df)
+printcp(prunedTree)
+```
+```{r}
+rmse(predict(prunedTree))
+```
+
+
+```{r}
+library(Metrics)
+
+pred_pruned <- predict(prunedTree, newdata = test_slice_df)
+
+m_RMSE2 <- RMSE(test_slice_df$Y,pred_pruned)
+
+print(m_RMSE2)
+
+m_MAE2 <- MAE(test_slice_df$Y, pred_pruned)
+
+print(m_MAE2)
+
+validation_tree_rpart <- c(m_AIC=NA,
+                           m_R2=NA,
+                           m_RMSE=m_RMSE2,
+                           m_MAE=m_MAE2, 
+                           m_num_variables=m_num_variables) 
+print(validation_tree_rpart)
+```
+
+```{r}
+m_num_variables <- 11
+```
+
+```{r}
+prunedTree$variable.importance
+```
+2.3 random forest
+```{r}
+library(randomForest)
+
+```
+
+```{r}
+set.seed(0)
+rftree <- randomForest(Y~.,data=train_slice_df,ntree=150)
+#print(rftree)
+```
+
+```{r}
+print(rftree)
+
+pred_rf <- predict(rftree,newdata = test_slice_df)
+```
+```{r}
+m_RMSE3 <- RMSE(test_slice_df$Y,pred_rf)
+m_RMSE3
+m_MAE3 <- MAE(test_slice_df$Y,pred_rf)
+m_MAE3
+```
+
+
+```{r}
+validation_rf <- c(m_AIC=NA,
+                   m_R2=NA,
+                   m_RMSE=m_RMSE3,m_MAE=m_MAE3, 
+                   m_num_variables=dim(test_slice_df)[2]-1) 
+```
+
+```{r}
+mRF_reduced = rftree
+```
+
+
+```{r}
+old_results<-readRDS(paste(dataPath,'result_s2_submitted.rds',sep="/"))
+```
+
+```{r}
+res <- list(Validation=rbind(old_results$Validation,
+                             validation_tree=validation_tree_rpart,
+                             validation_rf=validation_rf),
+            mTree_cv_results=mTree_cv_results,
+            mTree=prunedTree,
+            mRF=mRF_reduced)
+```
+
+```{r}
+saveRDS(res,paste(dataPath,'result_s3.rds',sep="/"))
+```
+
