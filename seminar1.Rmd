@@ -1,0 +1,253 @@
+---
+title: "MLseminar_W2"
+author: "Ling Yang"
+date: "4/6/2022"
+output: html_document
+---
+Read the data and do exploratory analysis.
+```{r setup, include=FALSE}
+dataPath<-"~/Desktop/Uchicago/Spring2022/31009 Machine Learning/Seminar/Week2"
+dat<-read.csv(paste(dataPath,"slice_localization_data.csv",sep="/"))
+```
+
+```{r}
+head(colnames(dat))
+tail(colnames(dat))
+head(dat,5)
+dim(dat)
+```
+Extract predictors and response.
+```{r}
+pred<-dat[,c(-1,-386)]
+dim(pred)
+head(colnames(pred))
+tail(colnames(pred))
+```
+```{r}
+Y<-dat[,386]
+```
+Calculate cardinality of each variable.
+   the cardinality of a set is a measure of the "number of elements" of the set.
+```{r}
+var_cardinality<-apply(pred,2,function(z) length(unique(z)))
+var_cardinality<-sort(var_cardinality)
+head(var_cardinality,40)
+```
+```{r}
+var_low_card<-names(var_cardinality[var_cardinality<=2])
+length(var_low_card)
+```
+```{r}
+pred<-pred[,!(colnames(pred) %in% var_low_card)]
+dim(pred)
+```
+Plot the response.
+```{r}
+plot(Y)
+summary(Y)
+hist(Y)
+qqnorm(Y)
+qqline(Y)
+```
+Preprocess predictors: scale the variables by standard deviation.
+Create the data frame for analysis.
+```{r}
+library(caret)
+library(lattice)
+prep_param<-preProcess(pred,method="scale")
+pred<-predict(prep_param,pred)
+```
+
+```{r}
+head(apply(pred,2,sd))
+slice_df<-data.frame(Y,pred)
+```
+Create train and test samples. Use the same seed as below.
+```{r}
+set.seed(11)
+inTrain <- createDataPartition(y = Y,p = .80,list = FALSE)
+str(inTrain)
+```
+```{r}
+train_slice_df<-slice_df[inTrain,]
+test_slice_df<-slice_df[-inTrain,]
+dim(train_slice_df)
+dim(test_slice_df)
+```
+Save both train and test samples to files for future projects.
+```{r}
+saveRDS(train_slice_df,paste(dataPath,"slice_train.rds",sep="/"))
+saveRDS(test_slice_df,paste(dataPath,"slice_test.rds",sep="/"))
+```
+
+```{r}
+train_slice_df<-readRDS(paste(dataPath,"slice_train.rds",sep="/"))
+test_slice_df<-readRDS(paste(dataPath,"slice_test.rds",sep="/"))
+```
+
+Linear Model
+Fit linear model with all predictors.
+```{r}
+lm_slice <- lm(Y~., train_slice_df)
+lm_slice
+summary(lm_slice)
+```
+Remove insignificant predictors using p-values at level 3%.
+```{r}
+pvalue_lt3 <- summary(lm_slice)$coefficients[,4] < 0.03
+selected <- train_slice_df[str(pvalue_lt3)]
+selected
+```
+Fit reduced linear model lm_reduced_slice
+```{r}
+lm_reduced_slice <- lm(Y~., selected)
+summary(lm_reduced_slice)
+```
+
+```{r}
+predicted_lm <- predict(lm_reduced_slice, test_slice_df)
+```
+
+```{r}
+library(Metrics)
+m_AIC <- AIC(lm_reduced_slice)
+m_R2 <- summary(lm_reduced_slice)$r.squared
+m_RMSE <- rmse(test_slice_df$Y,predicted_lm)
+m_MAE <- mae(test_slice_df$Y,predicted_lm)
+m_num_variables <- ncol(selected) - 1
+validation_reduced_lm = c(m_AIC,m_R2,m_RMSE,m_MAE, m_num_variables)
+validation_reduced_lm
+```
+
+```{r}
+test_slice_df
+```
+# PCR Method
+Apply PCA regression using method prcomp() as explained in the lecture.
+```{r}
+xPCA <- prcomp(train_slice_df[,-1])
+summary(xPCA)$importance
+```
+
+
+Define factorLoadings, factorScores, zeroLoading.
+Try creating factors manually using the formula from the derivation of the method.
+```{r}
+nFactors <- 360
+factorLoadings<-xPCA$rotation[,1:nFactors]
+zeroLoading<-xPCA$center
+X0<-t(apply(train_slice_df[,-1],1,function(z) z-zeroLoading))
+factorScores <- xPCA$x
+dim(factorScores)
+```
+```{r}
+factorScores
+```
+
+
+Create data frame with factors as predictors.
+Fit linear model using PCA factors as predictors.
+```{r}
+factorsData<-data.frame(Y=train_slice_df[,1],factorScores)
+m.PCA<-lm(Y~.,data=factorsData)
+```
+
+Rank and order PCA factors as predictors using relative importance measures.
+```{r}
+library(relaimpo)
+(metrics.PCA <- calc.relimp(m.PCA, type = c("first")))
+```
+
+```{r}
+(first.PCA.rank<-metrics.PCA@first.rank)
+```
+
+```{r}
+orderedFactors<-factorScores[,order(first.PCA.rank)]
+orderedLoadings<-factorLoadings[,order(first.PCA.rank)]
+colnames(orderedFactors)
+```
+
+```{r}
+orderedPCA.R2<-sapply(2:360,function(z) summary(lm(Y~.,data=data.frame(Y=train_slice_df[,1],orderedFactors[,1:z])))$r.squared)
+```
+
+```{r}
+min_factor <- min(which(orderedPCA.R2 > 0.8641832))
+min_factor
+```
+
+```{r}
+reduced_pca <- lm(Y~.,data=data.frame(Y=train_slice_df[,1],orderedFactors[,1:(min_factor+1)]))
+```
+
+
+```{r}
+#xPCA_test<-prcomp(test_slice_df[,2:361])
+#nFactors_test<-360
+#factorLoadings_test<-xPCA_test$rotation[,1:nFactors_test]
+#zeroLoading_test<-xPCA_test$center
+X0_test<-t(apply(test_slice_df[,2:361],1,function(z) z-zeroLoading))
+factorScores_test<-X0_test%*%xPCA$rotation[,1:nFactors]
+```
+
+```{r}
+orderedFactors_test<-factorScores_test[,order(first.PCA.rank)]
+orderedLoadings_test<-factorLoadings_test[,order(first.PCA.rank)]
+pca_reduced_test <- lm(Y~.,data=data.frame(Y=test_slice_df[,1],orderedFactors_test[,1:(min_factor+1)]))
+```
+
+```{r}
+new_test <- as.data.frame(factorScores_test)
+```
+
+```{r}
+predicted_pca <- predict(reduced_pca, new_test)
+```
+
+```{r}
+predicted_pca
+#dim(reduced_pca)
+```
+
+```{r}
+mp_AIC <- AIC(reduced_pca)
+mp_R2 <- summary(reduced_pca)$r.squared
+mp_RMSE <- rmse(test_slice_df$Y,predicted_pca)
+mp_MAE <- mae(test_slice_df$Y,predicted_pca)
+mp_num_variables <- length(reduced_pca$coefficients) - 1
+validation_PCR = c(mp_AIC,mp_R2,mp_RMSE,mp_MAE, mp_num_variables)
+validation_PCR
+```
+
+Alternative way to calculate RMSE & MAE
+```{r}
+d = test_slice_df$Y - predicted_pca
+rmse <- sqrt(mean((d)^2))
+mae <- mean(abs(test_slice_df$Y - predicted_pca))
+#r2 <- 1-(sum((d)^2)/sum((test_slice_df$Y - mean(test_slice_df$Y))^2))
+list_pcr <- c(rmse,mae)
+list_pcr
+```
+
+
+```{r}
+validation_reduced_lm
+```
+
+
+```{r}
+res <- list(Validation=rbind(validation_reduced_lm=validation_reduced_lm,
+                             validation_PCR=validation_PCR),
+            Linear_Model=lm_reduced_slice$coefficients,
+            PCR_Model=reduced_pca$coefficients)
+saveRDS(res,'result.rds')
+```
+
+```{r}
+result <- readRDS('result.rds')
+```
+```{r}
+result
+```
+
